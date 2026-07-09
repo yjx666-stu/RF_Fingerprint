@@ -1,0 +1,79 @@
+run_demo_device0_attack.sh 与 run_demo_device1_10s_1seg.sh 脚本说明
+
+一、run_demo_device0_attack.sh
+
+1. 脚本功能
+run_demo_device0_attack.sh 用于演示“未注册设备 device0 冒充已注册设备 device1”的攻击检测过程。该脚本控制系统采集 LoRa 空口 IQ 信号，触发 RK3588 端射频指纹识别流程，并根据最终严格身份验证结果输出认证结论。
+
+2. 工作流程
+脚本运行后，系统首先调用 USRP B210 采集 LoRa IQ 数据，并按设定时间窗口生成 .fc32 格式 IQ segment。随后，认证流程对 IQ segment 中的 LoRa burst 进行检测、同步、对齐和 RKNN 推理，得到射频指纹投票结果 vote_pred、vote_ratio 等信息。最后，脚本调用 final_verify_claimed_device.py 对 auth_events.csv 进行严格验证，判断当前信号是否为“干净可信的已注册设备 device1”。
+
+3. 判决逻辑
+该脚本不再要求系统必须明确判断异常设备属于 device0，而是重点验证当前信号是否满足合法 device1 的严格条件。只有当 vote_pred 指向 device1、auth_result 为 accept、reason 为 stable_vote，且不存在 IQ/meta 冲突、CFO 漂移、低投票置信度和复查标记时，才判定为身份合法。否则，即使二分类投票结果偏向 device1，系统仍判定当前信号不是干净可信的已注册设备，并输出身份非法。
+
+4. 主要输入
+- USRP B210 实时采集的 LoRa IQ 信号
+- claimed_device=device1
+- authorized_devices=device1
+- RKNN 射频指纹识别模型
+- auth_events.csv 认证事件文件
+
+5. 主要输出
+- Final Result 终端认证结果
+- auth_events.csv
+- final_verify_claimed_device.json
+- evidence 目录
+- 异常 IQ 文件、识别 CSV、日志和 JSON 取证文件
+
+6. 典型输出
+当 device0 冒充 device1 且未通过严格验证时，脚本输出：
+识别未通过！未注册设备device0
+身份非法
+
+同时保留认证结果、声明设备、射频指纹识别结果和停止原因等信息。
+
+
+二、run_demo_device1_10s_1seg.sh
+
+1. 脚本功能
+run_demo_device1_10s_1seg.sh 用于演示“已注册合法设备 device1 进行快速身份认证”的过程。该脚本主要验证合法 LoRa 设备在短时间采集窗口内是否能够通过射频指纹认证。
+
+2. 工作流程
+脚本运行后，系统使用 USRP B210 采集 LoRa 空口 IQ 信号，并生成 10 s 左右的 .fc32 IQ segment。随后系统对该 segment 进行 LoRa burst 检测、同步、对齐和 RKNN 推理，得到多个 burst 的射频指纹识别结果。系统通过多 burst 投票生成 vote_pred 和 vote_ratio，并结合 claimed_device=device1 判断合法设备是否通过认证。
+
+3. 判决逻辑
+该脚本用于合法设备快速认证演示。正常情况下，当射频指纹投票结果稳定指向 device1，且认证流程判定通过时，脚本输出 auth_pass 和身份合法。该脚本通常用于展示系统在 1 个 10 s IQ segment 内完成合法设备认证，并在认证完成后停止高负载识别，返回低负载监听状态。
+
+4. 主要输入
+- USRP B210 实时采集的 LoRa IQ 信号
+- claimed_device=device1
+- authorized_devices=device1
+- RKNN 射频指纹识别模型
+
+5. 主要输出
+- Final Result 终端认证结果
+- auth_events.csv
+- event_summary.json
+- session_state.json
+- 识别日志和中间判决文件
+
+6. 典型输出
+当合法 device1 认证通过时，脚本输出：
+识别通过！为已注册设备device1
+身份合法
+
+同时打印认证结果、声明设备、射频指纹识别结果和停止原因。
+
+
+三、两个脚本的区别
+
+1. run_demo_device0_attack.sh 面向攻击演示，重点验证“当前信号是否不是干净可信的 device1”。它用于发现未注册设备冒充已注册设备的情况，并在认证失败时保存异常证据。
+
+2. run_demo_device1_10s_1seg.sh 面向合法设备演示，重点验证“已注册 device1 能否在较短采集窗口内通过认证”。它用于展示系统的快速认证能力和边缘端触发式识别机制。
+
+3. 二者都依赖 USRP B210 采集 LoRa IQ 信号，并依赖 RK3588 上部署的 RKNN 模型完成射频指纹识别。不同的是，device0 攻击脚本额外使用 final_verify_claimed_device.py 进行严格 claimed_device 验证，避免二分类模型在存在冲突时误放行异常信号。
+
+
+四、系统意义
+
+两个脚本分别对应系统的两个核心演示场景：合法设备快速认证和未注册设备冒充检测。它们共同验证了本系统“射频指纹、轻量化认证、异常取证”的设计目标：系统不仅能够识别 LoRa 设备的物理层指纹，还能够在 RK3588 边缘平台上以事件触发方式完成认证，并在异常情况下保存可复现的取证数据。
